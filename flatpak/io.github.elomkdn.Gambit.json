@@ -37,6 +37,7 @@
         "install -Dm644 -t /app/share/io.github.elomkdn.Gambit/chess src/chess/*.py",
         "python3 -m compileall -q --invalidation-mode unchecked-hash /app/share/io.github.elomkdn.Gambit",
         "install -Dm644 -t /app/share/gambit/pieces data/pieces/*.svg",
+        "install -Dm644 data/puzzles.json /app/share/gambit/puzzles.json",
         "install -Dm644 data/io.github.elomkdn.Gambit.desktop /app/share/applications/io.github.elomkdn.Gambit.desktop",
         "install -Dm644 data/io.github.elomkdn.Gambit.metainfo.xml /app/share/metainfo/io.github.elomkdn.Gambit.metainfo.xml",
         "install -Dm644 data/io.github.elomkdn.Gambit.svg /app/share/icons/hicolor/scalable/apps/io.github.elomkdn.Gambit.svg",

@@ -14,16 +14,21 @@ from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from luma_appkit import (  # noqa: E402
     ActionCenter, AppWindow, BarAction, Command, CommandGroup, CommandRegistry, CornerPill, DestructiveDialog,
-    DetailsPane, Island, PanelChoices, PanelHeading, PanelKey, SPACER, Toast, ToastHost, TypeLabel, panel_list,
+    DetailsPane, Island, ModeSwitch, PanelChoices, PanelHeading, PanelKey, SPACER, Toast, ToastHost, TypeLabel,
+    panel_list,
 )
 
 from .board import BoardView  # noqa: E402
 from .engine import LEVEL, LEVELS, Engine  # noqa: E402
-from .game import Game, Setup  # noqa: E402
+from .game import COLOR_NAMES, Game, Setup  # noqa: E402
+from .puzzle import START_RATING, PuzzleBook, PuzzleRun, rated  # noqa: E402
 
 APP_ID = "io.github.elomkdn.Gambit"
 PHONE_MAX = 559
 THINK_DELAY_MS = 220        # let the person's move land before the computer answers
+PUZZLE_START_MS = 650       # the puzzle's position, a breath, then the opponent's move
+PUZZLE_REPLY_MS = 420
+MODES = (("play", "Play"), ("puzzles", "Puzzles"))
 
 
 def data_dir() -> Path:
@@ -39,7 +44,18 @@ class GambitWindow(AppWindow):
         self.phone = False
         self.engine = Engine()
         self._think_source = 0
+        self._puzzle_source = 0
+        self.run: PuzzleRun | None = None
+        self._rated = False
+        self._note = None           # what the last puzzle move earned, shown until the next one
         groups = (
+            CommandGroup("", (
+                Command("mode.play", "Play", lambda: self.set_mode("play"), "gamepad-2", shortcut=("Ctrl", "1")),
+                Command("mode.puzzles", "Puzzles", lambda: self.set_mode("puzzles"), "skip-forward",
+                        shortcut=("Ctrl", "2")),
+                Command("puzzle.next", "Next puzzle", self.next_puzzle, "skip-forward", shortcut=("Ctrl", "Right")),
+                Command("puzzle.solution", "Show solution", self.show_solution, "eye"),
+            )),
             CommandGroup("", (
                 Command("game.new", "New game…", self.open_new_game, "plus", shortcut=("Ctrl", "N")),
                 Command("game.undo", "Undo move", self.undo, "undo-2", shortcut=("Ctrl", "Z")),
@@ -55,9 +71,15 @@ class GambitWindow(AppWindow):
                          minimum_width=360, minimum_height=480)
 
         self.game = Game.from_saved(self.recall("game"))
+        self.mode = self.recall("mode", "play") if self.recall("mode", "play") in dict(MODES) else "play"
+        self.puzzles = PuzzleBook(data_dir() / "puzzles.json")
+        stats = self.recall("puzzle_stats", {})
+        self.stats = {"rating": START_RATING, "played": 0, "solved": 0, "streak": 0, "seen": []}
+        if isinstance(stats, dict):
+            self.stats.update({k: v for k, v in stats.items() if k in self.stats})
         self.board = BoardView(data_dir() / "pieces")
         self.board.choose_promotion = self._choose_promotion
-        self.board.connect("move", lambda _b, uci: self.person_moved(uci))
+        self.board.connect("move", lambda _b, uci: self._board_moved(uci))
         self.board.set_margin_bottom(84)        # room for the floating bar
 
         self.status = TypeLabel("", role="title-2")
@@ -69,7 +91,8 @@ class GambitWindow(AppWindow):
         column.append(self.board)
 
         self.details = DetailsPane("Game", closable=True)
-        self.corner = CornerPill(states=(
+        self.mode_switch = ModeSwitch(MODES, current=self.mode, on_change=self.set_mode, label="Mode")
+        self.corner = CornerPill(modes=self.mode_switch, states=(
             ("arrow-up-down", "Flip board", bool(self.recall("flipped", self.game.setup.human == chess.BLACK)),
              self.set_flipped),
         ), info=self.details)
@@ -100,16 +123,57 @@ class GambitWindow(AppWindow):
             GLib.idle_add(lambda: Toast.show(self.host, "The chess engine is missing: two-player games only",
                                              kind="warning") and False)
         self.board.set_flipped(bool(self.recall("flipped", self.game.setup.human == chess.BLACK)))
-        self.refresh()
-        self.details.show(open=False, subject=self.game)    # Information opens it; it shows this game
-        self._maybe_think()
+        self.details.show(open=False, subject=self.game)    # Information opens it; it shows this game or puzzle
+        if self.mode == "puzzles":
+            current = self.puzzles.by_id.get(self.recall("puzzle"))
+            self._start_puzzle(current) if current else self.next_puzzle()
+        else:
+            self.refresh()
+            self._maybe_think()
         self.connect("close-request", self._closing)
         from . import shots
         shots.prepare(self)
 
     # ── the game ──────────────────────────────────────────────────────
 
+    def set_mode(self, mode: str) -> None:
+        if mode == self.mode or mode not in dict(MODES):
+            return
+        self.mode = mode
+        self.remember("mode", mode)
+        if self.mode_switch.current != mode:
+            self.mode_switch.set_current(mode)
+        if self.center.grown is not None:
+            self.center.fold()
+        if mode == "puzzles":
+            self.engine.stop()
+            self._cancel(think=True)
+            if self.run is None:
+                self.next_puzzle()
+            else:
+                self.board.set_flipped(self.run.player == chess.BLACK)
+                self.refresh()
+        else:
+            self._cancel(puzzle=True)
+            self.board.set_flipped(bool(self.recall("flipped", self.game.setup.human == chess.BLACK)))
+            self.refresh()
+            self._maybe_think()
+
+    def _cancel(self, *, think=False, puzzle=False) -> None:
+        if think and self._think_source:
+            GLib.source_remove(self._think_source)
+            self._think_source = 0
+        if puzzle and self._puzzle_source:
+            GLib.source_remove(self._puzzle_source)
+            self._puzzle_source = 0
+
+    def _board_moved(self, uci: str) -> None:
+        (self.puzzle_moved if self.mode == "puzzles" else self.person_moved)(uci)
+
     def refresh(self, *, animate: chess.Move | None = None, before: chess.Board | None = None) -> None:
+        if self.mode == "puzzles":
+            self._refresh_puzzle(animate=animate, before=before)
+            return
         board = self.game.board
         last = board.peek() if board.move_stack else None
         self.board.show(board, last=last, animate=animate, before=before)
@@ -170,6 +234,9 @@ class GambitWindow(AppWindow):
         self._maybe_think()
 
     def hint(self) -> None:
+        if self.mode == "puzzles":
+            self._puzzle_hint()
+            return
         if not self.game.person_to_move or not self.engine.available:
             return
         self.status.set_text("Looking for a good move…")
@@ -215,9 +282,145 @@ class GambitWindow(AppWindow):
         if button is not None and button.get_active() != flipped:
             button.set_active(flipped)
 
+    # ── puzzles ───────────────────────────────────────────────────────
+
+    def next_puzzle(self) -> None:
+        puzzle = self.puzzles.pick(self.stats["rating"], self.stats["seen"])
+        if puzzle is None:
+            Toast.show(self.host, "No puzzles found", kind="warning")
+            return
+        self._start_puzzle(puzzle)
+
+    def _start_puzzle(self, puzzle) -> None:
+        self._cancel(puzzle=True)
+        self.run = PuzzleRun(puzzle)
+        self._rated = False
+        self._note = None
+        self.stats["seen"] = (self.stats["seen"] + [puzzle.id])[-400:]
+        self.remember("puzzle", puzzle.id)
+        self._save_stats()
+        self.board.set_flipped(self.run.player == chess.BLACK)
+        self.details.show(subject=self.run)
+        self.refresh()
+        self._puzzle_source = GLib.timeout_add(PUZZLE_START_MS, self._puzzle_opponent)
+
+    def _puzzle_opponent(self):
+        self._puzzle_source = 0
+        run = self.run
+        if run is None or self.mode != "puzzles":
+            return False
+        before = run.board.copy(stack=False)
+        move = run.opponent_move()
+        if move is not None:
+            self.refresh(animate=move, before=before)
+        return False
+
+    def puzzle_moved(self, uci: str) -> None:
+        run = self.run
+        if run is None or not run.your_turn:
+            return
+        before = run.board.copy(stack=False)
+        result = run.try_move(uci)
+        if result == "wrong":
+            self._rate(False)
+            self._note = "Not quite · try again"
+            self.refresh()
+            return
+        move = run.board.peek()
+        if result == "right":
+            self._note = "Right · keep going"
+            self.refresh(animate=move, before=before)
+            self._puzzle_source = GLib.timeout_add(PUZZLE_REPLY_MS, self._puzzle_opponent)
+            return
+        change = self._rate(True)
+        self._note = "Solved"
+        self.refresh(animate=move, before=before)
+        words = f"Solved · rating {round(self.stats['rating'])}"
+        if change:
+            words += f" ({'+' if change > 0 else ''}{round(change)})"
+        Toast.show(self.host, words, kind="done")
+
+    def _rate(self, won: bool) -> float:
+        """Count the puzzle once: the first mistake, or solving it clean. A hint counts for nothing."""
+        run = self.run
+        if self._rated or run is None:
+            return 0.0
+        self._rated = True
+        if run.helped:
+            return 0.0
+        before = self.stats["rating"]
+        self.stats["rating"] = rated(before, run.puzzle, won, self.stats["played"])
+        self.stats["played"] += 1
+        self.stats["solved"] += 1 if won else 0
+        self.stats["streak"] = self.stats["streak"] + 1 if won else 0
+        self._save_stats()
+        return self.stats["rating"] - before
+
+    def _save_stats(self) -> None:
+        self.remember("puzzle_stats", dict(self.stats))
+
+    def _puzzle_hint(self) -> None:
+        run = self.run
+        if run is None or not run.your_turn:
+            return
+        move = run.next_expected()
+        run.helped = True
+        if self.board.selected != move.from_square and self.board.hint is None:
+            self.board.show_selection(move.from_square)      # first, which piece
+        else:
+            self.board.show_hint(move)                        # then, where it goes
+        self.show_bar()
+
+    def show_solution(self) -> None:
+        run = self.run
+        if self.mode != "puzzles" or run is None or run.solved or run.shown:
+            return
+        self._cancel(puzzle=True)
+        self._rate(False)
+        self._note = "The solution"
+        self._play_solution()
+
+    def _play_solution(self):
+        self._puzzle_source = 0
+        run = self.run
+        if run is None or self.mode != "puzzles":
+            return False
+        before = run.board.copy(stack=False)
+        move = run.show_next()
+        if move is None:
+            self.refresh()
+            return False
+        self.refresh(animate=move, before=before)
+        self._puzzle_source = GLib.timeout_add(700, self._play_solution)
+        return False
+
+    def _refresh_puzzle(self, *, animate=None, before=None) -> None:
+        run = self.run
+        if run is None:
+            return
+        board = run.board
+        last = board.peek() if board.move_stack else None
+        self.board.show(board, last=last, animate=animate, before=before)
+        self.board.set_interactive(run.your_turn)
+        if run.your_turn and self._note in (None, "Right · keep going", "Not quite · try again"):
+            side = COLOR_NAMES[run.player]
+            status = self._note or f"Find the best move for {side}"
+        elif run.solved:
+            status = "Solved"
+        elif run.shown:
+            status = "The solution"
+        else:
+            status = self._note or "Watch the opponent's move"
+        self.status.set_text(status)
+        self.show_bar()
+        self._fill_details()
+
     # ── the bar ───────────────────────────────────────────────────────
 
     def show_bar(self) -> None:
+        if self.mode == "puzzles":
+            self._show_puzzle_bar()
+            return
         game = self.game
         has_moves = bool(game.board.move_stack) or game.resigned is not None
         self._new_action = BarAction("plus", "New game", primary=True, panel=self._new_game_panel, key="new")
@@ -236,7 +439,26 @@ class GambitWindow(AppWindow):
                                on_activate=lambda: (self.set_flipped(not self.board.flipped), self.show_bar())),
                      BarAction("list-ordered", "Moves", active=self.details.shown,
                                on_activate=self.toggle_details)]
-        self.center.show_bar(items, more=more)
+        self._show(items, more)
+
+    def _show_puzzle_bar(self) -> None:
+        run = self.run
+        items = [BarAction("wand-sparkles", tooltip="Show a hint", sensitive=bool(run and run.your_turn),
+                           on_activate=self.hint),
+                 SPACER,
+                 BarAction("skip-forward", "Next puzzle", primary=True, on_activate=self.next_puzzle)]
+        more = []
+        if run is not None and not run.solved and not run.shown:
+            more.append(BarAction("eye", "Show solution", on_activate=self.show_solution))
+        if self.phone:
+            more.append(BarAction("info", "Puzzle details", active=self.details.shown,
+                                  on_activate=self.toggle_details))
+        self._show(items, more)
+
+    def _show(self, items, more) -> None:
+        """On a phone the corner steps aside, so Play and Puzzles start the bar."""
+        modes = ModeSwitch(MODES, current=self.mode, on_change=self.set_mode, label="Mode") if self.phone else None
+        self.center.show_bar(items, more=more, modes=modes)
 
     def _new_game_panel(self):
         setup = self.game.setup
@@ -274,10 +496,15 @@ class GambitWindow(AppWindow):
     # ── details ───────────────────────────────────────────────────────
 
     def toggle_details(self) -> None:
-        self.details.show(open=not self.details.shown, subject=self.game)
+        subject = self.run if self.mode == "puzzles" and self.run is not None else self.game
+        self.details.show(open=not self.details.shown, subject=subject)
         self.show_bar()
 
     def _fill_details(self) -> None:
+        self.details.set_title("Puzzle" if self.mode == "puzzles" else "Game")
+        if self.mode == "puzzles":
+            self._fill_puzzle_details()
+            return
         self.details.clear()
         self.details.add_hero(self.game.players(), self.game.status())
         pairs = self.game.move_pairs()
@@ -286,6 +513,23 @@ class GambitWindow(AppWindow):
             self.details.add_facts([(f"{number}.", f"{white}    {black}".rstrip()) for number, white, black in pairs])
         else:
             self.details.add_facts([("", "No moves yet")])
+
+    def _fill_puzzle_details(self) -> None:
+        run = self.run
+        self.details.clear()
+        if run is None:
+            return
+        puzzle = run.puzzle
+        self.details.add_hero(f"Puzzle rated {puzzle.rating}", " · ".join(puzzle.theme_words()) or "Find the best move")
+        stats = self.stats
+        self.details.add_section("You")
+        self.details.add_facts([
+            ("Your rating", str(round(stats["rating"]))),
+            ("Solved", f"{stats['solved']} of {stats['played']}"),
+            ("In a row", str(stats["streak"])),
+        ])
+        self.details.add_section("Source")
+        self.details.add_facts([("Lichess puzzle", puzzle.id)])
 
     def _set_phone(self, phone: bool) -> None:
         self.phone = phone

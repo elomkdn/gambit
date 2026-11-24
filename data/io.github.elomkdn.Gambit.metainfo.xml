@@ -11,6 +11,7 @@
     <ul>
       <li>Play the computer at five levels, with a hint whenever you are stuck</li>
       <li>Play a friend on the same device</li>
+      <li>Solve puzzles from real games, picked near your level, with a rating that follows you</li>
       <li>Tap or drag the pieces, or play with the keyboard alone</li>
       <li>Undo a move, see every move of the game, and pick up where you left off</li>
     </ul>
@@ -55,7 +56,8 @@
   <releases>
     <release version="0.1.0" date="2026-11-24">
       <description>
-        <p>The first release: play the computer at five levels or a friend on the same device.</p>
+        <p>The first release: play the computer at five levels or a friend on the same device, and solve
+        puzzles from the Lichess puzzle database.</p>
       </description>
     </release>
   </releases>

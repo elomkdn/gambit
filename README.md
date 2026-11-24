@@ -7,6 +7,8 @@ friend on the same device. A calm board that fits a phone, a tablet and a
 desktop; tap or drag the pieces, or play with the keyboard alone.
 
 - **New game**: against the computer (Easy, Casual, Club, Hard, Master) or two players
+- **Puzzles**: 2,338 positions from the Lichess puzzle database, picked near your level, with a
+  rating that follows you, hints and the solution when you want it
 - **Hint**: an arrow shows a good move when you are stuck
 - **Undo**, **Resign**, **Flip board**, and every move of the game in the details pane
 - The game in progress is kept between runs
@@ -39,6 +41,8 @@ The manifest builds Stockfish 11 from its pinned source archive. `luma lint` and
 - Rules and notation: [python-chess](https://github.com/niklasf/python-chess) 1.11.2
   by Niklas Fiekas (GPL-3.0-or-later), vendored as `src/chess/`
 - Pieces: the cburnett set by Colin M.L. Burnett (GPL-2.0-or-later), as used by Lichess
+- Puzzles: the [Lichess puzzle database](https://database.lichess.org) (CC0), picked by
+  `tools/build_puzzles.py` (played at least 2,000 times, well liked, settled rating, short solution)
 
 ## License
 

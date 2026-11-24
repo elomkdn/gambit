@@ -106,6 +106,11 @@ class BoardView(Gtk.Widget):
             self._drag = None
         self.queue_draw()
 
+    def show_selection(self, square: int | None) -> None:
+        """Pick up the piece on `square` as if tapped: its legal squares show."""
+        self.selected = square
+        self.queue_draw()
+
     def show_hint(self, move: chess.Move | None) -> None:
         self.hint = move
         self.queue_draw()
