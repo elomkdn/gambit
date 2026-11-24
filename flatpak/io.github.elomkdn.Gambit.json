@@ -1,0 +1,54 @@
+{
+  "id": "io.github.elomkdn.Gambit",
+  "runtime": "org.projectluma.Platform",
+  "runtime-version": "44",
+  "sdk": "org.projectluma.Sdk",
+  "command": "run-app",
+  "finish-args": [
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri"
+  ],
+  "modules": [
+    {
+      "name": "stockfish",
+      "buildsystem": "simple",
+      "build-commands": [
+        "make -C src -j${FLATPAK_BUILDER_N_JOBS} build ARCH=x86-64 COMP=gcc",
+        "install -Dm755 src/stockfish /app/bin/stockfish",
+        "install -Dm644 Copying.txt /app/share/licenses/io.github.elomkdn.Gambit/stockfish-GPL-3.0.txt"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/official-stockfish/Stockfish/archive/refs/tags/sf_11.tar.gz",
+          "sha256": "802261cc601b67bed00c0ef7d21e2125959630f0852a06db9fc9bd74f440b199"
+        }
+      ]
+    },
+    {
+      "name": "gambit",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -Dm755 run-app /app/bin/run-app",
+        "install -Dm644 src/main.py /app/share/io.github.elomkdn.Gambit/main.py",
+        "install -Dm644 -t /app/share/io.github.elomkdn.Gambit/gambit src/gambit/*.py",
+        "install -Dm644 -t /app/share/io.github.elomkdn.Gambit/chess src/chess/*.py",
+        "python3 -m compileall -q --invalidation-mode unchecked-hash /app/share/io.github.elomkdn.Gambit",
+        "install -Dm644 -t /app/share/gambit/pieces data/pieces/*.svg",
+        "install -Dm644 data/io.github.elomkdn.Gambit.desktop /app/share/applications/io.github.elomkdn.Gambit.desktop",
+        "install -Dm644 data/io.github.elomkdn.Gambit.metainfo.xml /app/share/metainfo/io.github.elomkdn.Gambit.metainfo.xml",
+        "install -Dm644 data/io.github.elomkdn.Gambit.svg /app/share/icons/hicolor/scalable/apps/io.github.elomkdn.Gambit.svg",
+        "install -Dm644 -t /app/share/licenses/io.github.elomkdn.Gambit LICENSES/*",
+        "install -Dm644 LICENSE /app/share/licenses/io.github.elomkdn.Gambit/GPL-3.0-or-later.txt"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": ".."
+        }
+      ]
+    }
+  ]
+}

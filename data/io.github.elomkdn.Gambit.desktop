@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Gambit
+Comment=Play chess against the computer or a friend
+Exec=run-app
+Icon=io.github.elomkdn.Gambit
+Terminal=false
+DBusActivatable=false
+Categories=Game;BoardGame;
+Keywords=chess;board;game;stockfish;puzzle;checkmate;

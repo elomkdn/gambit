@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.elomkdn.Gambit</id>
+  <name>Gambit</name>
+  <summary>Play chess against the computer or a friend</summary>
+  <description>
+    <p>
+      Gambit is chess made for Luma: a calm board that fits a phone, a tablet and a desktop, and an
+      opponent that plays at your level, from your first game to grandmaster.
+    </p>
+    <ul>
+      <li>Play the computer at five levels, with a hint whenever you are stuck</li>
+      <li>Play a friend on the same device</li>
+      <li>Tap or drag the pieces, or play with the keyboard alone</li>
+      <li>Undo a move, see every move of the game, and pick up where you left off</li>
+    </ul>
+    <p>
+      The opponent is Stockfish, running on your device. Gambit needs no account and no connection.
+    </p>
+  </description>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="io.github.elomkdn">
+    <name>elomkdn</name>
+  </developer>
+  <url type="homepage">https://github.com/elomkdn/gambit</url>
+  <url type="bugtracker">https://github.com/elomkdn/gambit/issues</url>
+  <url type="help">https://github.com/elomkdn/gambit#readme</url>
+  <url type="vcs-browser">https://github.com/elomkdn/gambit</url>
+  <launchable type="desktop-id">io.github.elomkdn.Gambit.desktop</launchable>
+  <provides>
+    <binary>run-app</binary>
+  </provides>
+  <categories>
+    <category>Game</category>
+    <category>BoardGame</category>
+  </categories>
+  <keywords>
+    <keyword>chess</keyword>
+    <keyword>board game</keyword>
+    <keyword>stockfish</keyword>
+    <keyword>checkmate</keyword>
+  </keywords>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <custom>
+    <value key="org.projectluma.ApplicationContract">0.2</value>
+  </custom>
+  <releases>
+    <release version="0.1.0" date="2026-11-24">
+      <description>
+        <p>The first release: play the computer at five levels or a friend on the same device.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>
