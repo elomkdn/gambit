@@ -47,8 +47,9 @@
       ],
       "sources": [
         {
-          "type": "dir",
-          "path": ".."
+          "type": "git",
+          "url": "https://github.com/elomkdn/gambit.git",
+          "commit": "88aad9f4dc34544fb8e75fce4981cf9d3d05448d"
         }
       ]
     }
