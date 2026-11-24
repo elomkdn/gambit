@@ -52,6 +52,16 @@ def prepare(window):
             elif step.startswith("new:"):           # new:computer,black,club
                 opponent, side, level = (step[4:].split(",") + ["computer", "white", "casual"])[:3]
                 window.start_game(Setup(opponent, side != "black", level))
+            elif step.startswith("game:"):          # game:club,e2e4,c7c5 lays out a game against Gambit
+                level, *moves = step[5:].split(",")
+                window.start_game(Setup("computer", chess.WHITE, level))
+                for uci in moves:
+                    window.game.play(uci)
+                window.refresh()
+                window._maybe_think()
+            elif step.startswith("stats:"):         # stats:1480,37,29,4 is rating, played, solved, in a row
+                rating, played, solved, streak = (int(n) for n in step[6:].split(","))
+                window.stats.update(rating=rating, played=played, solved=solved, streak=streak)
             elif step.startswith("puzzle:"):        # puzzle:yd6eW starts that puzzle
                 window.set_mode("puzzles")
                 window._start_puzzle(window.puzzles.by_id[step[7:]])

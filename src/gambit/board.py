@@ -9,6 +9,7 @@ and a hint are shown on the board itself. Pieces are the cburnett set
 from __future__ import annotations
 
 import math
+import os
 import time
 from pathlib import Path
 
@@ -34,6 +35,7 @@ RADIUS = 10
 # The board's own colours: a cool, quiet pair that sits with Luma in light and dark.
 LIGHT = (0.882, 0.898, 0.914)
 DARK = (0.545, 0.627, 0.690)
+SHOT_SCALE = float(os.environ.get("APP_SHOT_SCALE", "1"))   # store screenshots render at 3x
 PIECE_FILE = {chess.PAWN: "P", chess.KNIGHT: "N", chess.BISHOP: "B", chess.ROOK: "R", chess.QUEEN: "Q",
               chess.KING: "K"}
 PIECE_NAME = {chess.PAWN: "pawn", chess.KNIGHT: "knight", chess.BISHOP: "bishop", chess.ROOK: "rook",
@@ -264,6 +266,10 @@ class BoardView(Gtk.Widget):
         found, value = self.get_style_context().lookup_color(role)
         return (value.red, value.green, value.blue, value.alpha) if found else fallback
 
+    def _density(self) -> float:
+        """Device pixels per point: the screen's, or a screenshot's when one renders at 3x."""
+        return self.get_scale_factor() * SHOT_SCALE
+
     def _texture(self, piece: chess.Piece, pixels: int):
         key = (piece.symbol(), pixels)
         texture = self._textures.get(key)
@@ -320,7 +326,7 @@ class BoardView(Gtk.Widget):
         self._draw_coordinates(cr, geometry)
         moving = self._anim[2] if self._anim else None
         dragging = self._drag[0] if self._drag else None
-        pixels = max(8, int(size * self.get_scale_factor()))
+        pixels = max(8, int(size * self._density()))
         for square, piece in self.board.piece_map().items():
             if square in (moving, dragging):
                 continue
@@ -361,7 +367,7 @@ class BoardView(Gtk.Widget):
             piece = self.board.piece_at(self._drag[0])
             if piece is not None:
                 lift = size * 1.15
-                snapshot.append_texture(self._texture(piece, max(8, int(lift * self.get_scale_factor()))),
+                snapshot.append_texture(self._texture(piece, max(8, int(lift * self._density()))),
                                         _rect(self._drag[1] - lift / 2, self._drag[2] - lift * 0.6, lift, lift))
 
     def _draw_coordinates(self, cr, geometry):

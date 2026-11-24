@@ -29,6 +29,24 @@
   <url type="bugtracker">https://github.com/elomkdn/gambit/issues</url>
   <url type="help">https://github.com/elomkdn/gambit#readme</url>
   <url type="vcs-browser">https://github.com/elomkdn/gambit</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Play the computer at five levels, with the opening named as you go</caption>
+      <image type="source" width="1280" height="800">https://raw.githubusercontent.com/elomkdn/gambit/main/data/screenshots/play.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Puzzles from real games, picked near your level</caption>
+      <image type="source" width="1280" height="800">https://raw.githubusercontent.com/elomkdn/gambit/main/data/screenshots/puzzles.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>A review of every finished game: accuracy and the key moments</caption>
+      <image type="source" width="1280" height="800">https://raw.githubusercontent.com/elomkdn/gambit/main/data/screenshots/review.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The same app on a phone</caption>
+      <image type="source" width="1170" height="2532">https://raw.githubusercontent.com/elomkdn/gambit/main/data/screenshots/phone.png</image>
+    </screenshot>
+  </screenshots>
   <launchable type="desktop-id">io.github.elomkdn.Gambit.desktop</launchable>
   <provides>
     <binary>run-app</binary>

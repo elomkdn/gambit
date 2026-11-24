@@ -2,7 +2,8 @@
 """Build the Flatpak bundle the way the manifest describes, without flatpak-builder.
 
 Each module's build commands run in `flatpak build` against the Luma SDK: Stockfish
-in its extracted, checksum-verified archive, Gambit in the given source tree.
+in its extracted, checksum-verified archive, Gambit in a fresh clone of the commit
+the manifest pins (or in the given source tree while the manifest says "dir").
 
 Usage: python3 -I tools/build_bundle.py SOURCE_TREE STOCKFISH_ARCHIVE WORK_DIR OUTPUT.flatpak
 """
@@ -36,6 +37,10 @@ def main(source, archive, work, output):
             with tarfile.open(archive) as tar:
                 tar.extractall(work / module["name"], filter="data")
             tree = next((work / module["name"]).iterdir())
+        elif src["type"] == "git":
+            tree = work / module["name"]
+            run("git", "clone", "--quiet", src["url"], str(tree))
+            run("git", "-C", str(tree), "checkout", "--quiet", "--detach", src["commit"])
         else:
             tree = source
         script = "set -e\n" + "\n".join(module["build-commands"]).replace("${FLATPAK_BUILDER_N_JOBS}", "4")
