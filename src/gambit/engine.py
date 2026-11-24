@@ -54,6 +54,7 @@ class Engine:
         self._stdin = None
         self._stdout = None
         self._waiting = deque()     # one entry per search not yet answered: a callback, or None to drop it
+        self._score = None          # the deepest evaluation the current search has given
         self.available = False
 
     def start(self) -> bool:
@@ -89,6 +90,22 @@ class Engine:
         self._send("position startpos" + (" moves " + " ".join(moves) if moves else ""))
         self._waiting.append(callback)
         self._send(f"go movetime {movetime or level.movetime}")
+
+    def analyse(self, moves, callback, *, movetime: int = 150) -> None:
+        """Evaluate the position after `moves` at full strength: `callback(best uci or None, score)`.
+
+        `score` is in centipawns for the side to move (a mate is ±10000 less its distance), or None.
+        """
+        if not self.available:
+            GLib.idle_add(lambda: callback(None, None) and False)
+            return
+        self.stop()
+        for name, value in DEFAULTS:
+            self._send(f"setoption name {name} value {value}")
+        self._send("position startpos" + (" moves " + " ".join(moves) if moves else ""))
+        self._waiting.append(lambda move, score: callback(move, score))
+        self._waiting[-1].wants_score = True
+        self._send(f"go movetime {movetime}")
 
     def stop(self) -> None:
         """Stop a search in progress; its answer, when it comes, is dropped."""
@@ -134,10 +151,25 @@ class Engine:
                 if callback is not None:
                     callback(None)
             return
-        if line.startswith("bestmove"):
+        if line.startswith("info") and " score " in line and "bound" not in line:
+            parts = line.split()
+            at = parts.index("score")
+            try:
+                kind, value = parts[at + 1], int(parts[at + 2])
+            except (IndexError, ValueError):
+                kind = None
+            if kind == "cp":
+                self._score = value
+            elif kind == "mate":
+                self._score = (10000 - abs(value)) * (1 if value > 0 else -1)
+        elif line.startswith("bestmove"):
             parts = line.split()
             move = parts[1] if len(parts) > 1 and parts[1] != "(none)" else None
             callback = self._waiting.popleft() if self._waiting else None
+            score, self._score = self._score, None
             if callback is not None:
-                callback(move)
+                if getattr(callback, "wants_score", False):
+                    callback(move, score)
+                else:
+                    callback(move)
         self._read()

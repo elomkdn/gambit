@@ -22,6 +22,7 @@ from .board import BoardView  # noqa: E402
 from .engine import LEVEL, LEVELS, Engine  # noqa: E402
 from .game import COLOR_NAMES, Game, Setup  # noqa: E402
 from .puzzle import START_RATING, PuzzleBook, PuzzleRun, rated  # noqa: E402
+from .review import Openings, accuracy, review  # noqa: E402
 
 APP_ID = "io.github.elomkdn.Gambit"
 PHONE_MAX = 559
@@ -29,6 +30,7 @@ THINK_DELAY_MS = 220        # let the person's move land before the computer ans
 PUZZLE_START_MS = 650       # the puzzle's position, a breath, then the opponent's move
 PUZZLE_REPLY_MS = 420
 MODES = (("play", "Play"), ("puzzles", "Puzzles"))
+MOMENTS = 12                # key moments listed in a review; the rest are counted
 
 
 def data_dir() -> Path:
@@ -48,6 +50,9 @@ class GambitWindow(AppWindow):
         self.run: PuzzleRun | None = None
         self._rated = False
         self._note = None           # what the last puzzle move earned, shown until the next one
+        self.verdicts = None        # the review of the finished game, once made
+        self._review_token = 0      # a new game or an undo makes a running review stale
+        self._review_progress = None
         groups = (
             CommandGroup("", (
                 Command("mode.play", "Play", lambda: self.set_mode("play"), "gamepad-2", shortcut=("Ctrl", "1")),
@@ -63,6 +68,7 @@ class GambitWindow(AppWindow):
                 Command("game.flip", "Flip board", lambda: self.set_flipped(not self.board.flipped),
                         "arrow-up-down", shortcut=("Ctrl", "R")),
                 Command("game.resign", "Resign…", self.ask_resign, "flag"),
+                Command("game.review", "Review game", self.start_review, "history"),
             )),
             CommandGroup("", (Command("game.quit", "Quit Gambit", self.close, "log-out", shortcut=("Ctrl", "Q")),)),
         )
@@ -73,6 +79,7 @@ class GambitWindow(AppWindow):
         self.game = Game.from_saved(self.recall("game"))
         self.mode = self.recall("mode", "play") if self.recall("mode", "play") in dict(MODES) else "play"
         self.puzzles = PuzzleBook(data_dir() / "puzzles.json")
+        self.openings = Openings(data_dir() / "openings.json")
         stats = self.recall("puzzle_stats", {})
         self.stats = {"rating": START_RATING, "played": 0, "solved": 0, "streak": 0, "seen": []}
         if isinstance(stats, dict):
@@ -86,8 +93,13 @@ class GambitWindow(AppWindow):
         self.status.set_halign(Gtk.Align.CENTER)
         self.status.set_margin_top(18)
         self.status.update_property([Gtk.AccessibleProperty.LABEL], ["Game status"])
+        self.opening = TypeLabel("", role="caption")
+        self.opening.set_halign(Gtk.Align.CENTER)
+        self.opening.set_margin_top(2)
+        self.opening.add_css_class("dim-label")
         column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, vexpand=True)
         column.append(self.status)
+        column.append(self.opening)
         column.append(self.board)
 
         self.details = DetailsPane("Game", closable=True)
@@ -146,6 +158,8 @@ class GambitWindow(AppWindow):
         if self.center.grown is not None:
             self.center.fold()
         if mode == "puzzles":
+            if self._review_progress is not None:
+                self._drop_review()
             self.engine.stop()
             self._cancel(think=True)
             if self.run is None:
@@ -179,6 +193,9 @@ class GambitWindow(AppWindow):
         self.board.show(board, last=last, animate=animate, before=before)
         self.board.set_interactive(self.game.person_to_move and not self.engine.thinking)
         self.status.set_text(self.game.status(thinking=self.engine.thinking and not self.game.over))
+        opening = self.openings.name(board)
+        self.opening.set_text(opening[1] if opening else "")
+        self.opening.set_visible(bool(opening))
         self.remember("game", self.game.saved())
         self.show_bar()
         self._fill_details()
@@ -230,6 +247,7 @@ class GambitWindow(AppWindow):
             GLib.source_remove(self._think_source)
             self._think_source = 0
         self.game.undo()
+        self._drop_review()
         self.refresh()
         self._maybe_think()
 
@@ -270,6 +288,7 @@ class GambitWindow(AppWindow):
         if setup.opponent == "computer" and not self.engine.available:
             setup.opponent = "human"
         self.game = Game(setup)
+        self._drop_review()
         self.details.show(subject=self.game)
         self.set_flipped(setup.opponent == "computer" and setup.human == chess.BLACK)
         self.refresh()
@@ -412,8 +431,86 @@ class GambitWindow(AppWindow):
         else:
             status = self._note or "Watch the opponent's move"
         self.status.set_text(status)
+        self.opening.set_visible(False)
         self.show_bar()
         self._fill_details()
+
+    # ── the review ────────────────────────────────────────────────────
+
+    def start_review(self) -> None:
+        game = self.game
+        if self.mode != "play" or not game.over or not game.board.move_stack or not self.engine.available:
+            return
+        if self._review_progress is not None:       # already under way
+            return
+        if self.verdicts is not None:
+            self.details.show(open=True, subject=game)
+            return
+        self._review_token += 1
+        token = self._review_token
+        moves = list(game.board.move_stack)
+        ucis = [move.uci() for move in moves]
+        count = len(moves) + 1
+        scores, bests = [None] * count, [None] * count
+        final = game.board
+        if final.is_checkmate():
+            scores[-1] = -10000.0
+        elif final.is_game_over(claim_draw=True):
+            scores[-1] = 0.0
+        todo = [i for i in range(count) if not (i == count - 1 and scores[i] is not None)]
+        progress = Toast.progress(self.host, "Reviewing the game", count=f"0 of {len(todo)}")
+        self._review_progress = progress
+
+        def next_position(done):
+            if token != self._review_token:
+                progress.finish(None)
+                return
+            if done == len(todo):
+                self.verdicts = review(moves, scores, bests)
+                self._review_progress = None
+                progress.finish("Review ready")
+                self.details.show(open=True, subject=self.game)
+                self.refresh()
+                return
+            index = todo[done]
+
+            def answered(best, score):
+                bests[index], scores[index] = best, score
+                progress.update("Reviewing the game", count=f"{done + 1} of {len(todo)}")
+                next_position(done + 1)
+            self.engine.analyse(ucis[:index], answered, movetime=300)
+        next_position(0)
+
+    def _drop_review(self) -> None:
+        """Forget the review, and stop one that is running: the game it was about has changed."""
+        self.verdicts = None
+        self._review_token += 1
+        if self._review_progress is not None:
+            self._review_progress.finish(None)
+            self._review_progress = None
+            self.engine.stop()
+
+    def _review_facts(self) -> None:
+        verdicts = self.verdicts
+        if not verdicts:
+            return
+        game = self.game
+        names = {True: "White", False: "Black"}
+        if game.against_computer:
+            names = {game.setup.human: "You", not game.setup.human: "Gambit"}
+        self.details.add_section("Accuracy")
+        self.details.add_facts([(names[white], f"{accuracy(verdicts, white)}%")
+                                for white in (True, False) if accuracy(verdicts, white) is not None])
+        moments = [v for v in verdicts if v.label]
+        self.details.add_section("Key moments")
+        if not moments:
+            self.details.add_facts([("", "No inaccuracies, mistakes or blunders")])
+            return
+        rows = [(f"{v.number} {v.san}", v.label + (f" · better was {v.best_san}" if v.best_san else ""))
+                for v in moments[:MOMENTS]]
+        if len(moments) > MOMENTS:
+            rows.append(("", f"And {len(moments) - MOMENTS} more"))
+        self.details.add_facts(rows)
 
     # ── the bar ───────────────────────────────────────────────────────
 
@@ -426,6 +523,10 @@ class GambitWindow(AppWindow):
         self._new_action = BarAction("plus", "New game", primary=True, panel=self._new_game_panel, key="new")
         items = [
             BarAction("undo-2", tooltip="Undo move", sensitive=has_moves, on_activate=self.undo),
+        ]
+        if game.over and game.board.move_stack and self.engine.available:
+            items.append(BarAction("history", "Review", on_activate=self.start_review))
+        items += [
             BarAction("wand-sparkles", tooltip="Show a good move",
                       sensitive=game.person_to_move and self.engine.available, on_activate=self.hint),
             SPACER,
@@ -467,13 +568,20 @@ class GambitWindow(AppWindow):
         side = PanelChoices((("white", "White"), ("black", "Black"), ("random", "Random")),
                             selected="white" if setup.human == chess.WHITE else "black")
         level = PanelChoices(tuple((item.key, item.label) for item in LEVELS), selected=setup.level)
+        computer_only = [PanelHeading("You play"), side, PanelHeading("Level"), level]
+
+        def show_computer_rows(key):        # sides and levels mean nothing between two people
+            for row in computer_only:
+                row.set_visible(key == "computer")
+        opponent.on_choose = show_computer_rows
+        show_computer_rows(opponent.selected)
 
         def start():
             human = {"white": chess.WHITE, "black": chess.BLACK}.get(side.selected, random.choice((True, False)))
             self.start_game(Setup(opponent.selected or "computer", human, level.selected or "casual"))
 
-        rows = [PanelHeading("Play against"), opponent, PanelHeading("You play"), side,
-                PanelHeading("Level"), level, PanelKey("Start game", icon="play", on_activate=start)]
+        rows = [PanelHeading("Play against"), opponent, *computer_only,
+                PanelKey("Start game", icon="play", on_activate=start)]
         return panel_list(rows, label="New game")
 
     def open_new_game(self) -> None:
@@ -507,6 +615,10 @@ class GambitWindow(AppWindow):
             return
         self.details.clear()
         self.details.add_hero(self.game.players(), self.game.status())
+        opening = self.openings.name(self.game.board)
+        if opening:
+            self.details.add_facts([("Opening", opening[1])])
+        self._review_facts()
         pairs = self.game.move_pairs()
         self.details.add_section("Moves")
         if pairs:
